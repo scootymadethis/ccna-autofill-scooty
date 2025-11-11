@@ -226,10 +226,66 @@ function matchAnswer(textA, textB) {
   dbg("after replace non-word", { a, b });
 
   const equal = a === b;
-  dbg("A === B ?", equal);
+  dbg("A === B ?", equal); 
   dbg("EXIT matchAnswer", equal);
   return equal;
 }
 
+function answerQuestionDebug() {
+  alert("▶ Inizio funzione answerQuestionDebug");
+
+  // Trova l'elemento attivo
+  const activeBlock = document.querySelector(".active-block");
+  if (!activeBlock) {
+    alert("❌ Nessun .active-block trovato");
+    return;
+  }
+  alert("✅ Trovato .active-block");
+
+  // Leggi data-index
+  const dataIndexStr = activeBlock.getAttribute("data-index");
+  alert("📦 data-index = " + dataIndexStr);
+  const dataIndex = parseInt(dataIndexStr, 10);
+  if (isNaN(dataIndex)) {
+    alert("❌ data-index non valido");
+    return;
+  }
+
+  // Trova tutte le domande
+  const questionBodies = document.querySelectorAll(".mcq__body-inner");
+  alert("🔍 Trovati " + questionBodies.length + " elementi .mcq__body-inner");
+  if (!questionBodies.length) {
+    alert("❌ Nessuna domanda trovata (.mcq__body-inner)");
+    return;
+  }
+
+  // Calcola indice reale
+  const zeroBasedIndex = dataIndex - 1;
+  alert("ℹ️ Uso indice = " + zeroBasedIndex);
+
+  const questionTextDom = questionBodies[zeroBasedIndex];
+  if (!questionTextDom) {
+    alert("❌ Nessun elemento con indice " + zeroBasedIndex);
+    return;
+  }
+
+  const questionText = questionTextDom.textContent.trim();
+  alert("🧠 Testo domanda:\n\n" + questionText);
+
+  // Trova la lista delle risposte
+  const answersDom = document.querySelector("ul.coreContent");
+  if (!answersDom) {
+    alert("❌ Nessuna lista ul.coreContent trovata");
+    return;
+  }
+  alert("✅ Trovata lista risposte");
+
+  const answers = answersDom.children;
+  alert("📋 Numero risposte trovate: " + answers.length);
+
+  alert("🏁 Fine debug — tutto trovato correttamente!");
+}
+
+window.answerQuestionDebug = answerQuestionDebug;
 window.answerQuestion = answerQuestion;
 window.testKeyAlert = testKeyAlert;
