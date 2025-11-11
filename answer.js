@@ -88,34 +88,36 @@ function highlight(el) {
   try {
     if (!el) return;
 
-    // rimuovi eventuali selezioni precedenti
-    const doc = el.ownerDocument || document;
-    const prev = doc.querySelectorAll(".is-selected");
-    prev.forEach((p) => p.classList.remove("is-selected"));
-
     // risali al parent del parent
     let target = el.parentElement;
     if (target && target.parentElement) {
       target = target.parentElement;
     }
 
-    // se esiste, aggiungi la classe al parent del parent
-    if (target) {
-      target.classList.add("is-selected");
-      target.scrollIntoView({
-        block: "center",
-        inline: "nearest",
-        behavior: "smooth",
-      });
-    } else {
-      // fallback: se non c'è parent, applica direttamente all'elemento
-      el.classList.add("is-selected");
-      el.scrollIntoView({
-        block: "center",
-        inline: "nearest",
-        behavior: "smooth",
-      });
+    if (!target) {
+      console.warn(
+        "⚠️ highlight(): nessun parent valido, clicco direttamente su el."
+      );
+      target = el;
     }
+
+    // simula un click di mouse
+    const rect = target.getBoundingClientRect();
+    const evt = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+    });
+    target.dispatchEvent(evt);
+
+    // scrolla in vista (opzionale)
+    target.scrollIntoView({
+      block: "center",
+      inline: "nearest",
+      behavior: "smooth",
+    });
   } catch (e) {
     console.error("Errore in highlight():", e);
   }
