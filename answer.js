@@ -401,62 +401,72 @@ function findTextEverywherePrompt() {
     return;
   }
 
-  /** @type {{el:Element, path:string, content:string}[]} */
-  const equals = [];
-  /** @type {{el:Element, path:string, content:string}[]} */
-  const contains = [];
+  const lowerQuery = query.toLowerCase().trim();
+  const results = [];
 
+  // attraversa tutti i documenti e shadow roots
   scanAllDocuments((doc, path) => {
     try {
       walkRootForElements(doc, (el) => {
-        const text = (el.textContent || "").trim();
-        if (!text) return;
+        const rawText = el.textContent || "";
+        const text = rawText.replace(/\s+/g, " "); // normalizza spazi
+        if (!text.toLowerCase().includes(lowerQuery)) return;
 
-        if (eqi(text, query)) {
-          equals.push({ el, path: `${path} :: ${cssPath(el)}`, content: text });
-        } else if (inci(text, query)) {
-          contains.push({
-            el,
-            path: `${path} :: ${cssPath(el)}`,
-            content: text,
-          });
-        }
+        // trova posizione del match
+        const idx = text.toLowerCase().indexOf(lowerQuery);
+        if (idx === -1) return;
+
+        // --- delimitazione con "almeno due spazi" ---
+        // cerca da idx verso sinistra il gruppo di >=2 spazi
+        const before = rawText.slice(0, idx);
+        const after = rawText.slice(idx + query.length);
+
+        // regex per trovare ultimi "  " prima del match
+        const leftMatch = before.match(/(\s{2,})[^]*$/);
+        // regex per trovare primi "  " dopo il match
+        const rightMatch = after.match(/^([^]*?)(\s{2,})/);
+
+        let leftIdx = leftMatch
+          ? before.lastIndexOf(leftMatch[1]) + leftMatch[1].length
+          : 0;
+        let rightIdx = rightMatch
+          ? idx + query.length + rightMatch[1].length
+          : rawText.length;
+
+        // estrai frase e pulisci
+        const snippet = rawText.slice(leftIdx, rightIdx).trim();
+
+        results.push({
+          el,
+          path: `${path} :: ${cssPath(el)}`,
+          snippet,
+          full: rawText.trim(),
+        });
       });
     } catch {}
   });
 
-  // evidenzia alcuni match
-  equals.slice(0, 5).forEach((m) => highlight(m.el));
-  contains.slice(0, 5).forEach((m) => highlight(m.el));
-
-  window.lastTextSearch = { query, equals, contains };
-
-  if (!equals.length && !contains.length) {
+  if (!results.length) {
     alert(`❌ Nessun elemento trovato che contenga: "${query}"`);
     return;
   }
 
-  let msg = `🔎 Ricerca: "${query}"\n\n`;
-  if (equals.length) {
-    msg += `=== MATCH UGUAGLIA (${equals.length}) ===\n\n`;
-    msg += equals
-      .map((m, i) => {
-        const full = (m.content || "").replace(/\r?\n/g, "\n");
-        return `${i + 1}) ${m.path}\n----- CONTENUTO COMPLETO -----\n${full}\n`;
-      })
-      .join("\n");
-    msg += "\n";
-  }
-  if (contains.length) {
-    msg += `=== MATCH CONTIENE (${contains.length}) ===\n\n`;
-    msg += contains
-      .map((m, i) => {
-        const full = (m.content || "").replace(/\r?\n/g, "\n");
-        return `${i + 1}) ${m.path}\n----- CONTENUTO COMPLETO -----\n${full}\n`;
-      })
-      .join("\n");
-    msg += "\n";
-  }
+  // evidenzia i primi risultati
+  results.slice(0, 5).forEach((m) => highlight(m.el));
+
+  // salva per uso in console
+  window.lastTextSearch = { query, results };
+
+  // compone messaggio
+  let msg = `🔎 Ricerca: "${query}"\n\nTrovati ${results.length} risultati.\n\n`;
+  msg += results
+    .map(
+      (m, i) =>
+        `${i + 1}) ${m.path}\n--- Frase trovata (tra ≥2 spazi) ---\n${
+          m.snippet
+        }\n`
+    )
+    .join("\n");
 
   alert(msg);
 }
