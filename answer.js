@@ -392,7 +392,7 @@ function scanAllDocuments(processDoc) {
  * Salva in window.lastTextSearch = { query, equals, contains }
  */
 function findTextEverywherePrompt() {
-  // evita doppi trigger
+  // evita trigger multipli
   if (window.__FT_RUNNING) return;
   window.__FT_RUNNING = true;
 
@@ -403,7 +403,7 @@ function findTextEverywherePrompt() {
       .trim();
 
   const queryInput = window.prompt(
-    'Testo ESATTO da cercare in .mcq__item-text-inner (ambito: block-view[tabindex="0"]):',
+    'Testo ESATTO da cercare in .mcq__item-text-inner (ambito: block-view[tabindex="0"] in iframe/shadow):',
     ""
   );
   const query = norm(queryInput);
@@ -413,46 +413,68 @@ function findTextEverywherePrompt() {
     return;
   }
 
-  // 1) limita l’ambito a <block-view tabindex="0">
-  const container = document.querySelector('block-view[tabindex="0"]');
-  if (!container) {
-    alert('❌ Nessun <block-view tabindex="0"> trovato nel documento.');
-    window.__FT_RUNNING = false;
-    return;
-  }
-
-  // 2) raccogli TUTTE le occorrenze esatte in .mcq__item-text-inner sotto il container
-  /** @type {{el: Element, path: string, text: string}[]} */
+  /** @type {{el: Element, path: string, text: string, containerPath: string}[]} */
   const matches = [];
-  try {
-    const nodes = deepQuerySelectorAll(container, ".mcq__item-text-inner");
-    for (const el of nodes) {
-      const txt = norm(el.textContent);
-      if (txt === query) {
-        matches.push({ el, path: cssPath(el), text: txt });
-      }
-    }
-  } catch {}
+  let containersFound = 0;
 
-  if (!matches.length) {
+  // Scansiona TUTTI i documenti accessibili (top + iframe same-origin)
+  scanAllDocuments((doc, framePath) => {
+    try {
+      // Trova tutti i block-view[tabindex="0"] in questo documento (profondo: include shadow "open")
+      const containers = deepQuerySelectorAll(doc, 'block-view[tabindex="0"]');
+      containersFound += containers.length;
+
+      // Per ogni container, cerca TUTTI i .mcq__item-text-inner che uguagliano il testo
+      containers.forEach((container, cIdx) => {
+        const items = deepQuerySelectorAll(container, ".mcq__item-text-inner");
+        for (const el of items) {
+          const txt = norm(el.textContent);
+          if (txt === query) {
+            matches.push({
+              el,
+              text: txt,
+              path: `${framePath} :: ${cssPath(el)}`,
+              containerPath: `${framePath} :: ${cssPath(
+                container
+              )} (container #${cIdx + 1})`,
+            });
+          }
+        }
+      });
+    } catch {}
+  });
+
+  if (!containersFound) {
     alert(
-      `❌ Nessun .mcq__item-text-inner con testo ESATTO: "${query}" dentro <block-view tabindex="0">`
+      '❌ Nessun block-view[tabindex="0"] trovato (in documenti/iframe/shadow accessibili).'
     );
     window.__FT_RUNNING = false;
     return;
   }
 
-  // 3) evidenzia (limita a primi 10 per non esagerare) e scrolla in vista
+  if (!matches.length) {
+    alert(
+      `❌ Nessuna occorrenza ESATTA di "${query}" in .mcq__item-text-inner dentro block-view[tabindex="0"]\n` +
+        `Container totali trovati: ${containersFound}`
+    );
+    window.__FT_RUNNING = false;
+    return;
+  }
+
+  // Evidenzia i primi match (limitiamo a 10 per non esagerare) e porta in vista
   matches.slice(0, 10).forEach((m) => highlight(m.el));
 
-  // 4) salva e mostra riepilogo
-  window.lastExactChoices = { query, matches };
+  // Salva per console/uso successivo
+  window.lastExactChoices = { query, containersFound, matches };
 
-  const msg =
-    `✅ Trovate ${matches.length} occorrenze in <block-view tabindex="0"> ` +
-    `con testo ESATTO:\n\n"${query}"\n\n` +
-    matches.map((m, i) => `${i + 1}) ${m.path}`).join("\n");
-
+  // Report
+  let msg =
+    `✅ Trovate ${matches.length} occorrenze ESATTE in .mcq__item-text-inner\n` +
+    `all’interno di block-view[tabindex="0"] (container totali: ${containersFound}).\n\n` +
+    `Testo cercato: "${query}"\n\n` +
+    matches
+      .map((m, i) => `${i + 1}) ${m.path}\n   ↳ container: ${m.containerPath}`)
+      .join("\n");
   alert(msg);
 
   window.__FT_RUNNING = false;
