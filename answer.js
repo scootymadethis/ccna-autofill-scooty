@@ -157,7 +157,7 @@ const clean = (s) =>
 
 /* === funzione principale: risponde alla domanda === */
 async function answerQuestion(answerData) {
-  alert("▶ Avvio auto-risposta");
+  alert("▶ Avvio auto-risposta (versione test singolo click)");
 
   const found = findActiveBlockEverywhere();
   if (!found) {
@@ -182,7 +182,6 @@ async function answerQuestion(answerData) {
     return;
   }
 
-  // trova la domanda corrispondente in answerData
   const clean = (s) =>
     String(s || "")
       .toLowerCase()
@@ -201,6 +200,10 @@ async function answerQuestion(answerData) {
     return;
   }
 
+  // usa solo la prima risposta (test)
+  const firstAnswer = wantedAnswers[0];
+  alert("📋 Risposta selezionata (solo la prima):\n" + firstAnswer);
+
   // trova il container block-view[tabindex="0"]
   let container = closestDeep(questionTextDom, 'block-view[tabindex="0"]');
   if (!container) {
@@ -212,51 +215,32 @@ async function answerQuestion(answerData) {
     return;
   }
 
-  // prendi tutte le risposte
+  // trova l'elemento con testo identico
   const choiceEls = deepQuerySelectorAll(container, ".mcq__item-text-inner");
-  const byText = new Map(
-    choiceEls.map((el) => [
-      String(el.textContent).replace(/\s+/g, " ").trim().toLowerCase(),
-      el,
-    ])
+  const norm = (s) =>
+    String(s || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  const match = choiceEls.find(
+    (el) => norm(el.textContent) === norm(firstAnswer)
   );
 
-  const notFound = [];
-  let selected = 0;
-
-  // clicca ogni risposta con delay e controlla che venga registrata
-  for (let i = 0; i < wantedAnswers.length; i++) {
-    const ans = wantedAnswers[i];
-    const key = ans.replace(/\s+/g, " ").trim().toLowerCase();
-    const el = byText.get(key);
-    if (!el) {
-      notFound.push(ans);
-      continue;
-    }
-
-    // piccola attesa tra un click e l'altro (per UI multiple)
-    await new Promise((r) => setTimeout(r, 500));
-
-    // prova click multiplo (alcuni quiz richiedono due eventi consecutivi per check)
-    try {
-      highlight(el);
-      selected++;
-    } catch (e) {
-      console.error("Errore cliccando", ans, e);
-    }
+  if (!match) {
+    alert(
+      `❌ Nessuna risposta corrispondente trovata nel DOM:\n"${firstAnswer}"`
+    );
+    return;
   }
 
-  // riepilogo finale
-  setTimeout(() => {
-    if (selected > 0) {
-      alert(
-        `✅ Selezionate ${selected}/${wantedAnswers.length} risposte.\n` +
-          (notFound.length ? `⚠️ Non trovate:\n${notFound.join("\n")}` : "")
-      );
-    } else {
-      alert("❌ Nessuna risposta trovata tra le opzioni.");
-    }
-  }, 400);
+  // simula un click solo su quella risposta
+  try {
+    highlight(match);
+    alert("✅ Cliccata la risposta: " + firstAnswer);
+  } catch (e) {
+    console.error("Errore cliccando la risposta:", e);
+    alert("❌ Errore nel click della risposta");
+  }
 }
 
 /* === Hotkeys === */
