@@ -90,34 +90,59 @@ function highlight(el) {
 
     // risali al parent del parent
     let target = el.parentElement;
-    if (target && target.parentElement) {
-      target = target.parentElement;
-    }
+    if (target && target.parentElement) target = target.parentElement;
+    if (!target) target = el;
 
-    if (!target) {
-      console.warn(
-        "⚠️ highlight(): nessun parent valido, clicco direttamente su el."
-      );
-      target = el;
-    }
+    const doc = target.ownerDocument || document;
+    const win = doc.defaultView || window;
 
-    // simula un click di mouse
+    // scroll in vista prima del click (opzionale)
+    try {
+      target.scrollIntoView({
+        block: "center",
+        inline: "nearest",
+        behavior: "smooth",
+      });
+    } catch {}
+
+    // coordinate "centrali" (non obbligatorie ma utili)
     const rect = target.getBoundingClientRect();
-    const evt = new MouseEvent("click", {
+    const cx = Math.max(0, rect.left + rect.width / 2);
+    const cy = Math.max(0, rect.top + rect.height / 2);
+
+    // costruisci eventi dal window giusto (quello dell'iframe)
+    const eventInit = {
       bubbles: true,
       cancelable: true,
-      view: window,
-      clientX: rect.left + rect.width / 2,
-      clientY: rect.top + rect.height / 2,
-    });
-    target.dispatchEvent(evt);
+      composed: true,
+      clientX: cx,
+      clientY: cy,
+      // non passiamo "view" esplicitamente: il costruttore lo risolve da solo
+    };
 
-    // scrolla in vista (opzionale)
-    target.scrollIntoView({
-      block: "center",
-      inline: "nearest",
-      behavior: "smooth",
-    });
+    // alcuni UI richiedono l'intera sequenza
+    try {
+      target.dispatchEvent(new win.PointerEvent("pointerdown", eventInit));
+    } catch {}
+    try {
+      target.dispatchEvent(new win.MouseEvent("mousedown", eventInit));
+    } catch {}
+    try {
+      target.dispatchEvent(new win.PointerEvent("pointerup", eventInit));
+    } catch {}
+    try {
+      target.dispatchEvent(new win.MouseEvent("mouseup", eventInit));
+    } catch {}
+    try {
+      target.dispatchEvent(new win.MouseEvent("click", eventInit));
+    } catch {}
+
+    // fallback per sicurezza
+    if (typeof target.click === "function") {
+      try {
+        target.click();
+      } catch {}
+    }
   } catch (e) {
     console.error("Errore in highlight():", e);
   }
