@@ -88,19 +88,34 @@ function highlight(el) {
   try {
     if (!el) return;
 
-    // Rimuovi eventuali highlight precedenti
-    const prev = el.ownerDocument.querySelectorAll(".is-selected");
+    // rimuovi eventuali selezioni precedenti
+    const doc = el.ownerDocument || document;
+    const prev = doc.querySelectorAll(".is-selected");
     prev.forEach((p) => p.classList.remove("is-selected"));
 
-    // Aggiungi la classe "is-selected" al nuovo elemento
-    el.classList.add("is-selected");
+    // risali al parent del parent
+    let target = el.parentElement;
+    if (target && target.parentElement) {
+      target = target.parentElement;
+    }
 
-    // Porta l'elemento in vista
-    el.scrollIntoView({
-      block: "center",
-      inline: "nearest",
-      behavior: "smooth",
-    });
+    // se esiste, aggiungi la classe al parent del parent
+    if (target) {
+      target.classList.add("is-selected");
+      target.scrollIntoView({
+        block: "center",
+        inline: "nearest",
+        behavior: "smooth",
+      });
+    } else {
+      // fallback: se non c'è parent, applica direttamente all'elemento
+      el.classList.add("is-selected");
+      el.scrollIntoView({
+        block: "center",
+        inline: "nearest",
+        behavior: "smooth",
+      });
+    }
   } catch (e) {
     console.error("Errore in highlight():", e);
   }
