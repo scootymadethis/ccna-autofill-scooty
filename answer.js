@@ -217,6 +217,9 @@ function answerQuestion(answerData) {
     return;
   }
   const questionTextDom = bodies[idx0];
+  // dopo aver settato questionTextDom = bodies[idx0];
+  debugAscendParents(questionTextDom); // <-- DEBUG: risalita con alert a ogni step
+
   if (!questionTextDom) {
     alert("❌ Nessuna .mcq__body-inner all’indice " + idx0);
     return;
@@ -268,6 +271,63 @@ function answerQuestion(answerData) {
     alert(
       "ℹ️ Nessun answerData passato: mi fermo al dump delle risposte correnti."
     );
+  }
+}
+
+// Debug: risale dai genitori e mostra info a ogni step.
+// Attraversa anche gli shadow root (salendo all'host).
+function debugAscendParents(startNode) {
+  if (!startNode) {
+    alert("❌ debugAscendParents: startNode assente");
+    return;
+  }
+
+  let cur = startNode;
+  let steps = 0;
+
+  alert(
+    "🔼 Parto da: " + (cur.tagName ? cur.tagName.toLowerCase() : cur.nodeName)
+  );
+
+  while (cur && steps < 100) {
+    let parent = cur.parentElement;
+    let crossedShadow = false;
+
+    // se non c'è parentElement, prova a salire all'host dello shadow root
+    if (!parent && cur.getRootNode) {
+      const root = cur.getRootNode();
+      if (root && root.host) {
+        parent = root.host;
+        crossedShadow = true;
+      }
+    }
+
+    if (!parent) {
+      alert("⛔ Stop: nessun parentElement e nessun host di shadow trovato.");
+      break;
+    }
+
+    const tag = parent.tagName
+      ? parent.tagName.toLowerCase()
+      : String(parent.nodeName);
+    const classes = parent.classList
+      ? Array.from(parent.classList).join(" ")
+      : parent.className || "";
+    const id = parent.id ? "#" + parent.id : "";
+
+    alert(
+      `[#${steps}] ${crossedShadow ? "(shadow→host) " : ""}${tag}${id}  ` +
+        (classes ? 'class="' + classes + '"' : "(senza classi)")
+    );
+
+    // stop quando troviamo .mcq__inner
+    if (parent.classList && parent.classList.contains("mcq__inner")) {
+      alert("✅ Trovato .mcq__inner — fine risalita.");
+      break;
+    }
+
+    cur = parent;
+    steps++;
   }
 }
 
