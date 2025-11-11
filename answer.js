@@ -1,74 +1,69 @@
 /**
- * answer.js — versione completa con:
- * - ricerca in tutti i frame same-origin
- * - attraversamento di shadow DOM "open"
- * - lettura data-index da <button class="active-block" data-index="...">
- * - testo domanda da .mcq__body-inner[dataIndex-1]
- * - match/auto-selezione delle risposte
- * - alert di debug e hotkey "A"
+ * answer.js — completo
+ * - supporto iframe + shadow DOM
+ * - domanda da .mcq__body-inner[dataIndex-1]
+ * - risalita a .mcq__inner → discesa a .mcq__widget-inner
+ * - risposte lette da .mcq__item-text-inner
+ * - alert elenco risposte correnti
+ * - matching/auto-selezione risposte (se answerData passato)
  *
  * @typedef {{question: string, answers: string[]}} Answer
  */
 
 /* ===================== UTIL ===================== */
 
-/** Scansiona DOM + tutti gli shadow root "open" e fa querySelectorAll */
+/** Scansiona DOM + shadow root "open" e fa querySelectorAll */
 function deepQuerySelectorAll(root, selector) {
-  const result = [];
+  const out = [];
   const stack = [root];
   while (stack.length) {
     const node = stack.pop();
     if (!node) continue;
 
     if (node.querySelectorAll) {
-      node.querySelectorAll(selector).forEach((el) => result.push(el));
+      node.querySelectorAll(selector).forEach((el) => out.push(el));
     }
 
     // figli normali
-    if (node.children) {
-      for (const c of node.children) stack.push(c);
-    }
+    if (node.children) for (const c of node.children) stack.push(c);
 
     // shadow root (aperti)
-    if (node.shadowRoot) {
-      stack.push(node.shadowRoot);
-    }
+    if (node.shadowRoot) stack.push(node.shadowRoot);
 
-    // se è Document/ShadowRoot, visita i figli diretti
+    // document/shadowroot -> figli diretti
     if (node instanceof Document || node instanceof ShadowRoot) {
       for (const c of node.children || []) stack.push(c);
     }
   }
-  return result;
+  return out;
 }
-
-/** Ritorna il primo elemento che matcha un selettore cercando in DOM + shadow */
 function deepQuerySelector(root, selector) {
   const all = deepQuerySelectorAll(root, selector);
   return all.length ? all[0] : null;
 }
 
 /**
- * Cerca in: documento principale + TUTTI gli iframe same-origin (ricorsivo),
- * attraversando gli shadow root "open".
- * Torna il primo button.active-block trovato e il suo document.
+ * Cerca .active-block:
+ * - nel documento principale
+ * - ricorsivamente in tutti gli iframe same-origin
+ * Attraversa shadow DOM aperti.
  */
 function findActiveBlockEverywhere() {
-  // 1) prova nel documento principale
+  // top document prima
   const inTop = deepQuerySelector(document, "button.active-block");
   if (inTop) {
     alert("✅ .active-block trovato nel documento principale");
     return { el: inTop, doc: document, where: "top" };
   }
 
-  // 2) prova negli iframe same-origin (DFS)
+  // altrimenti scansiona i frame
   const visited = new Set();
   function walk(win, path) {
     try {
       if (!win || visited.has(win)) return null;
       visited.add(win);
 
-      const doc = win.document; // se cross-origin, eccezione più sotto
+      const doc = win.document; // SecurityError se cross-origin
 
       const foundHere = deepQuerySelector(doc, "button.active-block");
       if (foundHere) {
@@ -81,13 +76,11 @@ function findActiveBlockEverywhere() {
 
       for (let i = 0; i < win.frames.length; i++) {
         try {
-          // test accesso same-origin
-          void win.frames[i].document;
+          void win.frames[i].document; // verifica same-origin
           const res = walk(win.frames[i], path.concat("frame[" + i + "]"));
           if (res) return res;
         } catch {
           // cross-origin: ignora
-          continue;
         }
       }
       return null;
@@ -100,69 +93,113 @@ function findActiveBlockEverywhere() {
   if (!res) {
     alert(
       "❌ .active-block NON trovato in nessun frame/shadow accessibile.\n" +
-        "Se è in un iframe di ALTRO dominio, fai girare lo userscript anche lì (Tampermonkey: Run only in top frame = No, e aggiungi @match per quel dominio)."
+        "Se è in un iframe di ALTRO dominio, fai girare lo userscript anche lì (TM: Run only in top frame = No, aggiungi @match)."
     );
   }
   return res;
 }
 
-/* ===================== CORE ===================== */
-
-/** Normalizza testi (case-insensitive, rimuove non-word ASCII) */
+/** Normalizza testo per confronto semplice */
 function normalize(s) {
   return String(s || "")
     .toLowerCase()
-    .replace(/[^\w]/g, ""); // semplice e compatibile
+    .replace(/[^\w]/g, "");
+}
+function matchAnswer(a, b) {
+  return normalize(a) === normalize(b);
 }
 
-/** Match rigido su testi normalizzati */
-function matchAnswer(textA, textB) {
-  return normalize(textA) === normalize(textB);
+/* ===================== ESTRAZIONE RISPOSTE ===================== */
+
+/**
+ * Dato il nodo DOM della domanda (.mcq__body-inner),
+ * risale a .mcq__inner e scende a .mcq__widget-inner
+ * per raccogliere i container risposta e il testo da .mcq__item-text-inner
+ *
+ * @param {Element} questionTextDom
+ * @returns {{containers: Element[], texts: string[]}}
+ */
+function getCurrentAnswersFromQuestionNode(questionTextDom) {
+  // risali
+  const mcqInner = questionTextDom.closest(".mcq__inner");
+  if (!mcqInner) {
+    alert("❌ Non trovo il parent .mcq__inner a partire dalla domanda.");
+    return { containers: [], texts: [] };
+  }
+
+  // scendi
+  const widgetInner = deepQuerySelector(mcqInner, ".mcq__widget-inner");
+  if (!widgetInner) {
+    alert("❌ Non trovo .mcq__widget-inner dentro .mcq__inner.");
+    return { containers: [], texts: [] };
+  }
+
+  // ogni risposta ha un .mcq__item-text-inner (uno per risposta)
+  const textNodes = deepQuerySelectorAll(widgetInner, ".mcq__item-text-inner");
+
+  // i "container" delle risposte sono i parent immediati utili per click/checkbox
+  // se serve più su/giù, cambia qui:
+  const containers = textNodes.map(
+    (n) => n.closest(".mcq__item, .mcq__option, .mcq__choice") || n
+  );
+
+  const texts = textNodes
+    .map((n) => (n.textContent || "").trim())
+    .filter(Boolean);
+
+  return { containers, texts };
 }
 
 /**
- * Trova le risposte corrette confrontando la domanda e le possibili risposte
+ * Trova le risposte corrette confrontando i testi delle risposte correnti
+ * con l'answerData.
+ *
  * @param {Array<Answer>} answerData
  * @param {string} questionText
- * @param {HTMLCollection|Element[]} answers
- * @returns {HTMLElement[]}
+ * @param {{containers: Element[], texts: string[]}} current
+ * @returns {Element[]} containers corrispondenti alle risposte corrette
  */
-function findAnswers(answerData, questionText, answers) {
+function findCorrectAnswerContainers(answerData, questionText, current) {
   if (!answerData || !Array.isArray(answerData)) return [];
-  const correct = [];
+  const out = [];
+  const { containers, texts } = current;
 
   for (const entry of answerData) {
-    if (matchAnswer(questionText.trim(), (entry?.question || "").trim())) {
-      for (const li of Array.from(answers)) {
-        const liText = (li.textContent || "").trim();
-        for (const maybe of entry.answers || []) {
-          if (matchAnswer(liText, maybe)) {
-            correct.push(li);
+    if (!entry) continue;
+    if (matchAnswer(questionText.trim(), (entry.question || "").trim())) {
+      // mappa testo->container
+      for (let i = 0; i < texts.length; i++) {
+        const t = texts[i];
+        for (const want of entry.answers || []) {
+          if (matchAnswer(t, want)) {
+            out.push(containers[i]);
           }
         }
       }
+      break; // una volta matchata la domanda, possiamo fermarci
     }
   }
-  return correct;
+  return out;
 }
 
+/* ===================== FLUSSO PRINCIPALE ===================== */
+
 /**
- * Esegue il flusso:
- * - trova .active-block ovunque,
- * - legge data-index e seleziona .mcq__body-inner[idx-1],
- * - mostra alert col testo della domanda,
- * - individua le risposte corrette e le seleziona.
+ * Trova domanda + risposte correnti; mostra elenco in alert;
+ * se presenti dati, abbina e seleziona risposte corrette.
  *
  * @param {Array<Answer>} answerData
  */
 function answerQuestion(answerData) {
   alert("▶ Inizio answerQuestion");
 
+  // 1) trova active-block (anche in iframe/shadow)
   const found = findActiveBlockEverywhere();
   if (!found) return;
 
   const { el: activeBlock, doc, where } = found;
 
+  // 2) indice della domanda
   const dataIndexStr = activeBlock.getAttribute("data-index");
   alert("📦 data-index = " + dataIndexStr + " (in: " + where + ")");
   const dataIndex = parseInt(dataIndexStr, 10);
@@ -172,72 +209,78 @@ function answerQuestion(answerData) {
   }
   const idx0 = dataIndex - 1;
 
-  // Tutte le domande nel document dove è stato trovato active-block
-  const questionBodies = deepQuerySelectorAll(doc, ".mcq__body-inner");
-  alert("🔍 .mcq__body-inner trovati: " + questionBodies.length);
-  if (!questionBodies.length) {
-    alert("❌ Nessuna .mcq__body-inner trovata nel frame attivo");
+  // 3) prendi la domanda da .mcq__body-inner[idx0]
+  const bodies = deepQuerySelectorAll(doc, ".mcq__body-inner");
+  alert("🔍 .mcq__body-inner trovati: " + bodies.length);
+  if (!bodies.length) {
+    alert("❌ Nessuna .mcq__body-inner nel frame attivo");
     return;
   }
-
-  const questionTextDom = questionBodies[idx0];
+  const questionTextDom = bodies[idx0];
   if (!questionTextDom) {
-    alert("❌ Nessun .mcq__body-inner all’indice " + idx0);
+    alert("❌ Nessuna .mcq__body-inner all’indice " + idx0);
     return;
   }
-
   const questionText = (questionTextDom.textContent || "").trim();
   alert("🧠 Domanda corrente:\n\n" + questionText);
 
-  // Risposte: cerca la lista nel medesimo document (alcuni template hanno più UL)
-  // Qui prendiamo la prima ul.coreContent visibile nello stesso document
-  const answersList = deepQuerySelectorAll(doc, "ul.coreContent");
-  if (!answersList.length) {
-    alert("❌ Nessun ul.coreContent trovato nel frame attivo");
+  // 4) estrai le risposte correnti dal nuovo layout
+  const current = getCurrentAnswersFromQuestionNode(questionTextDom);
+  window.currentAnswers = current.texts.slice(); // salva per debug/uso esterno
+
+  if (!current.texts.length) {
+    alert("⚠️ Nessuna risposta trovata in .mcq__widget-inner");
     return;
   }
-  const answersDom = answersList[0];
-  const answers = answersDom.children || [];
-
-  alert("📋 Numero risposte trovate: " + answers.length);
-
-  // Reset selezione
-  for (const li of Array.from(answers)) {
-    const input = li.querySelector("input");
-    if (input) input.checked = false;
-  }
-
-  // Trova e seleziona le risposte corrette
-  const correctAnswers = findAnswers(answerData || [], questionText, answers);
-  alert("🔢 Risposte corrette trovate: " + correctAnswers.length);
-
-  for (const li of correctAnswers) {
-    const input = li.querySelector("input");
-    if (!input) continue;
-    input.checked = true;
-    try {
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    } catch {}
-  }
-
   alert(
-    "✅ Fine answerQuestion — selezionate " +
-      correctAnswers.length +
-      " risposte."
+    "📋 Risposte correnti:\n\n" +
+      current.texts.map((t, i) => `${i + 1}. ${t}`).join("\n")
   );
+
+  // 5) se abbiamo answerData, prova a selezionare le risposte corrette
+  if (answerData && answerData.length) {
+    const correctContainers = findCorrectAnswerContainers(
+      answerData,
+      questionText,
+      current
+    );
+    alert("🔢 Risposte corrette identificate: " + correctContainers.length);
+
+    // prova a selezionare: prima input, altrimenti click sul container
+    for (const c of correctContainers) {
+      const input = c.querySelector("input");
+      if (input) {
+        try {
+          input.checked = true;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch {}
+      } else {
+        // fallback: click sul container (spesso la UI seleziona così)
+        try {
+          c.click();
+        } catch {}
+      }
+    }
+
+    alert("✅ Fine — selezionate " + correctContainers.length + " risposte.");
+  } else {
+    alert(
+      "ℹ️ Nessun answerData passato: mi fermo al dump delle risposte correnti."
+    );
+  }
 }
 
-/* ===================== DEBUG / HOTKEY ===================== */
+/* ===================== HOTKEY / EXPORT ===================== */
 
-// Hotkey: premi "A" per lanciare answerQuestion (usa window.answerData se presente)
+// Premi "A" per avviare tutto (usa window.answerData se presente)
 window.addEventListener("keydown", (e) => {
   if (e.key && e.key.toLowerCase() === "a") {
-    alert("🔑 Premuto A → avvio answerQuestion()");
+    alert("🔑 Premuto A → answerQuestion()");
     answerQuestion(window.answerData || []);
   }
 });
 
-// Esporta funzioni utili sul window
+// Esporta funzioni utili
 window.answerQuestion = answerQuestion;
-window.findActiveBlockEverywhere = findActiveBlockEverywhere;
+window.getCurrentAnswersFromQuestionNode = getCurrentAnswersFromQuestionNode;
