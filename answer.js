@@ -86,15 +86,24 @@ function cssPath(el) {
 /** Evidenzia e scrolla in vista (per ricerca testuale) */
 function highlight(el) {
   try {
-    const old = el.style.outline;
-    el.style.outline = "3px solid red";
+    if (!el) return;
+
+    // Rimuovi eventuali highlight precedenti
+    const prev = el.ownerDocument.querySelectorAll(".is-selected");
+    prev.forEach((p) => p.classList.remove("is-selected"));
+
+    // Aggiungi la classe "is-selected" al nuovo elemento
+    el.classList.add("is-selected");
+
+    // Porta l'elemento in vista
     el.scrollIntoView({
       block: "center",
       inline: "nearest",
       behavior: "smooth",
     });
-    setTimeout(() => (el.style.outline = old), 2500);
-  } catch {}
+  } catch (e) {
+    console.error("Errore in highlight():", e);
+  }
 }
 
 /* ===================== TROVA active-block (iframe + shadow) ===================== */
