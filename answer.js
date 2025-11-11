@@ -175,13 +175,18 @@ async function answerQuestion(answerData) {
 
   const questionTextDom = bodies[dataIndex];
   const questionTextRaw = (questionTextDom.textContent || "").trim();
-  alert("🧠 Domanda:\n\n" + questionTextRaw);
+  console.log("🧠 Domanda:", questionTextRaw);
 
   if (!answerData || !answerData.length) {
     alert("⚠️ answerData vuoto, premi 'P' per caricarlo prima.");
     return;
   }
 
+  // trova la domanda corrispondente in answerData
+  const clean = (s) =>
+    String(s || "")
+      .toLowerCase()
+      .replace(/[^\w]/g, "");
   const entry = answerData.find(
     (e) => clean(e?.question) === clean(questionTextRaw)
   );
@@ -196,7 +201,7 @@ async function answerQuestion(answerData) {
     return;
   }
 
-  // container principale (block-view[tabindex="0"])
+  // trova il container block-view[tabindex="0"]
   let container = closestDeep(questionTextDom, 'block-view[tabindex="0"]');
   if (!container) {
     const all = deepQuerySelectorAll(doc, 'block-view[tabindex="0"]');
@@ -207,31 +212,51 @@ async function answerQuestion(answerData) {
     return;
   }
 
-  // mappa risposte correnti
+  // prendi tutte le risposte
   const choiceEls = deepQuerySelectorAll(container, ".mcq__item-text-inner");
   const byText = new Map(
-    choiceEls.map((el) => [normChoice(el.textContent), el])
+    choiceEls.map((el) => [
+      String(el.textContent).replace(/\s+/g, " ").trim().toLowerCase(),
+      el,
+    ])
   );
 
-  let selected = 0,
-    notFound = [];
+  const notFound = [];
+  let selected = 0;
 
-  wantedAnswers.forEach((ans, i) => {
-    const el = byText.get(normChoice(ans));
-    if (el) {
-      setTimeout(() => highlight(el), i * 250);
-      selected++;
-    } else {
+  // clicca ogni risposta con delay e controlla che venga registrata
+  for (let i = 0; i < wantedAnswers.length; i++) {
+    const ans = wantedAnswers[i];
+    const key = ans.replace(/\s+/g, " ").trim().toLowerCase();
+    const el = byText.get(key);
+    if (!el) {
       notFound.push(ans);
+      continue;
     }
-  });
 
+    // piccola attesa tra un click e l'altro (per UI multiple)
+    await new Promise((r) => setTimeout(r, 500));
+
+    // prova click multiplo (alcuni quiz richiedono due eventi consecutivi per check)
+    try {
+      highlight(el);
+      selected++;
+    } catch (e) {
+      console.error("Errore cliccando", ans, e);
+    }
+  }
+
+  // riepilogo finale
   setTimeout(() => {
-    alert(
-      `✅ Selezionate ${selected}/${wantedAnswers.length} risposte.\n` +
-        (notFound.length ? `⚠️ Non trovate:\n${notFound.join("\n")}` : "")
-    );
-  }, wantedAnswers.length * 300);
+    if (selected > 0) {
+      alert(
+        `✅ Selezionate ${selected}/${wantedAnswers.length} risposte.\n` +
+          (notFound.length ? `⚠️ Non trovate:\n${notFound.join("\n")}` : "")
+      );
+    } else {
+      alert("❌ Nessuna risposta trovata tra le opzioni.");
+    }
+  }, 400);
 }
 
 /* === Hotkeys === */
