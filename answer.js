@@ -25,6 +25,14 @@ function dbg(label, value) {
  * @typedef {{question:string, answers:string[]}} Answer
  */
 
+function testKeyAlert() {
+  window.addEventListener("keydown", (event) => {
+    if (event.key.toLowerCase() === "a") {
+      alert("✅ Hai premuto A — lo script è attivo e funzionante!");
+    }
+  });
+}
+
 /**
  * Avvia l’autorisposta + debug passo-passo
  * @param {Array<Answer>} answerData
