@@ -392,18 +392,18 @@ function scanAllDocuments(processDoc) {
  * Salva in window.lastTextSearch = { query, equals, contains }
  */
 function findTextEverywherePrompt() {
-  // evita richiami multipli (es. key repeat)
+  // evita doppi trigger
   if (window.__FT_RUNNING) return;
   window.__FT_RUNNING = true;
 
-  // normalizzazione "esatta": trim + comprimi spazi (ma NON lowercase)
+  // normalizzazione "esatta": comprimi spazi interni + trim (case-sensitive)
   const norm = (s) =>
     String(s || "")
       .replace(/\s+/g, " ")
       .trim();
 
   const queryInput = window.prompt(
-    "Testo ESATTO da cercare in .mcq__item-text-inner:",
+    'Testo ESATTO da cercare in .mcq__item-text-inner (ambito: block-view[tabindex="0"]):',
     ""
   );
   const query = norm(queryInput);
@@ -413,64 +413,50 @@ function findTextEverywherePrompt() {
     return;
   }
 
-  // cerca il PRIMO match e fermati
-  let found = null;
-
-  // DFS sugli elementi + shadow roots, ritorna il PRIMO elemento che soddisfa predicate
-  function findFirstDeepInDoc(doc, predicate) {
-    try {
-      const walker = doc.createTreeWalker(doc, NodeFilter.SHOW_ELEMENT, null);
-      let n;
-      while ((n = walker.nextNode())) {
-        // controlla l'elemento corrente
-        if (predicate(n)) return n;
-
-        // scendi nello shadow root (se "open")
-        if (n.shadowRoot) {
-          const sub = findFirstDeepInDoc(n.shadowRoot, predicate);
-          if (sub) return sub;
-        }
-      }
-    } catch {}
-    return null;
-  }
-
-  // scansiona documento principale + iframes same-origin e FERMATI appena trovi
-  scanAllDocuments((doc, path) => {
-    if (found) return; // già trovato altrove
-    const match = findFirstDeepInDoc(doc, (el) => {
-      if (!el.classList || !el.classList.contains("mcq__item-text-inner"))
-        return false;
-      const txt = norm(el.textContent);
-      return txt === query; // uguaglianza ESATTA dopo normalizzazione
-    });
-    if (match) {
-      found = {
-        el: match,
-        path: `${path} :: ${cssPath(match)}`,
-        text: norm(match.textContent),
-      };
-    }
-  });
-
-  if (!found) {
-    alert(`❌ Nessun .mcq__item-text-inner con testo ESATTO: "${query}"`);
+  // 1) limita l’ambito a <block-view tabindex="0">
+  const container = document.querySelector('block-view[tabindex="0"]');
+  if (!container) {
+    alert('❌ Nessun <block-view tabindex="0"> trovato nel documento.');
     window.__FT_RUNNING = false;
     return;
   }
 
-  // evidenzia e scrolla, poi AL ALERT UNICO
-  highlight(found.el);
-  alert(
-    `✅ Trovata prima occorrenza ESATTA in .mcq__item-text-inner\n\n` +
-      `Testo: "${found.text}"\n` +
-      `Posizione: ${found.path}`
-  );
+  // 2) raccogli TUTTE le occorrenze esatte in .mcq__item-text-inner sotto il container
+  /** @type {{el: Element, path: string, text: string}[]} */
+  const matches = [];
+  try {
+    const nodes = deepQuerySelectorAll(container, ".mcq__item-text-inner");
+    for (const el of nodes) {
+      const txt = norm(el.textContent);
+      if (txt === query) {
+        matches.push({ el, path: cssPath(el), text: txt });
+      }
+    }
+  } catch {}
 
-  // opzionale: salva per console
-  window.lastExactChoice = { query, match: found };
+  if (!matches.length) {
+    alert(
+      `❌ Nessun .mcq__item-text-inner con testo ESATTO: "${query}" dentro <block-view tabindex="0">`
+    );
+    window.__FT_RUNNING = false;
+    return;
+  }
+
+  // 3) evidenzia (limita a primi 10 per non esagerare) e scrolla in vista
+  matches.slice(0, 10).forEach((m) => highlight(m.el));
+
+  // 4) salva e mostra riepilogo
+  window.lastExactChoices = { query, matches };
+
+  const msg =
+    `✅ Trovate ${matches.length} occorrenze in <block-view tabindex="0"> ` +
+    `con testo ESATTO:\n\n"${query}"\n\n` +
+    matches.map((m, i) => `${i + 1}) ${m.path}`).join("\n");
+
+  alert(msg);
 
   window.__FT_RUNNING = false;
+  return matches;
 }
 
 /* ===================== HOTKEY / EXPORT ===================== */
