@@ -232,3 +232,4 @@ function matchAnswer(textA, textB) {
 }
 
 window.answerQuestion = answerQuestion;
+window.testKeyAlert = testKeyAlert;
