@@ -6,7 +6,7 @@
  *   • prende il testo da .mcq__body-inner[idx-1]
  *   • trova la risposta corretta in window.answerData
  *   • cerca i .mcq__item-text-inner nel block-view[tabindex="0"]
- *   • clicca automaticamente tutti quelli con testo corrispondente
+ *   • clicca automaticamente tutti quelli con testo corrispondente (multi support)
  */
 
 function deepQuerySelectorAll(root, selector) {
@@ -91,10 +91,11 @@ function highlight(el) {
       target.dispatchEvent(new win.MouseEvent("click", ev));
     } catch {}
 
-    if (typeof target.click === "function")
+    if (typeof target.click === "function") {
       try {
         target.click();
       } catch {}
+    }
   } catch (e) {
     console.error("Errore in highlight():", e);
   }
@@ -155,9 +156,110 @@ const clean = (s) =>
     .toLowerCase()
     .replace(/[^\w]/g, "");
 
-/* === funzione principale: risponde alla domanda === */
+/* === helper: click robusto su una opzione a partire dal nodo testo === */
+// 1) prova la <label.mcq__item-label.js-item-label for=...>
+// 2) se fallisce, clicca l'input .mcq__item-input.js-item-input
+// 3) fallback: highlight() sul testo
+async function clickOptionElement(fromTextEl) {
+  if (!fromTextEl) return false;
+
+  // risali al blocco risposta
+  const item =
+    fromTextEl.closest(".mcq__item, .js-mcq-item") ||
+    fromTextEl.closest('[class*="mcq__item"]') ||
+    fromTextEl;
+
+  const doc = item.ownerDocument || document;
+  const win = doc.defaultView || window;
+
+  // trova input/label con classi reali
+  const input = item.querySelector(
+    'input.mcq__item-input.js-item-input[type="checkbox"], ' +
+      'input.mcq__item-input.js-item-input[type="radio"]'
+  );
+  let label = null;
+  if (input && input.id) {
+    label = item.querySelector(
+      `label.mcq__item-label.js-item-label[for="${CSS.escape(input.id)}"]`
+    );
+  }
+  if (!label) {
+    label = item.querySelector("label.mcq__item-label.js-item-label");
+  }
+
+  const synthClick = (el) => {
+    try {
+      const rect = el.getBoundingClientRect();
+      const ev = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      };
+      try {
+        el.dispatchEvent(new win.PointerEvent("pointerdown", ev));
+      } catch {}
+      try {
+        el.dispatchEvent(new win.MouseEvent("mousedown", ev));
+      } catch {}
+      try {
+        el.dispatchEvent(new win.PointerEvent("pointerup", ev));
+      } catch {}
+      try {
+        el.dispatchEvent(new win.MouseEvent("mouseup", ev));
+      } catch {}
+      try {
+        el.dispatchEvent(new win.MouseEvent("click", ev));
+      } catch {}
+      if (typeof el.click === "function")
+        try {
+          el.click();
+        } catch {}
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // 1) preferisci la label
+  if (label) {
+    synthClick(label);
+    await new Promise((r) => setTimeout(r, 50));
+    if (input) {
+      try {
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch {}
+      try {
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      } catch {}
+    }
+    return true;
+  }
+
+  // 2) altrimenti clic diretto sull'input
+  if (input) {
+    synthClick(input);
+    try {
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch {}
+    try {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch {}
+    return true;
+  }
+
+  // 3) fallback sul container
+  try {
+    highlight(fromTextEl);
+    return true;
+  } catch {}
+  return false;
+}
+
+/* === funzione principale: risponde alla domanda (supporto multiple) === */
 async function answerQuestion(answerData) {
-  alert("▶ Avvio auto-risposta (versione test singolo click)");
+  alert("▶ Avvio auto-risposta");
 
   const found = findActiveBlockEverywhere();
   if (!found) {
@@ -182,10 +284,6 @@ async function answerQuestion(answerData) {
     return;
   }
 
-  const clean = (s) =>
-    String(s || "")
-      .toLowerCase()
-      .replace(/[^\w]/g, "");
   const entry = answerData.find(
     (e) => clean(e?.question) === clean(questionTextRaw)
   );
@@ -200,11 +298,7 @@ async function answerQuestion(answerData) {
     return;
   }
 
-  // usa solo la prima risposta (test)
-  const firstAnswer = wantedAnswers[0];
-  alert("📋 Risposta selezionata (solo la prima):\n" + firstAnswer);
-
-  // trova il container block-view[tabindex="0"]
+  // container attivo
   let container = closestDeep(questionTextDom, 'block-view[tabindex="0"]');
   if (!container) {
     const all = deepQuerySelectorAll(doc, 'block-view[tabindex="0"]');
@@ -215,32 +309,40 @@ async function answerQuestion(answerData) {
     return;
   }
 
-  // trova l'elemento con testo identico
-  const choiceEls = deepQuerySelectorAll(container, ".mcq__item-text-inner");
-  const norm = (s) =>
-    String(s || "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
-  const match = choiceEls.find(
-    (el) => norm(el.textContent) === norm(firstAnswer)
+  // mappa testo corrente -> nodo testo (.mcq__item-text-inner)
+  const choiceTextNodes = deepQuerySelectorAll(
+    container,
+    ".mcq__item-text-inner"
+  );
+  const textMap = new Map(
+    choiceTextNodes.map((n) => [normChoice(n.textContent), n])
   );
 
-  if (!match) {
-    alert(
-      `❌ Nessuna risposta corrispondente trovata nel DOM:\n"${firstAnswer}"`
-    );
-    return;
+  let selected = 0;
+  const notFound = [];
+
+  // clicca TUTTE le risposte previste (una alla volta, con delay)
+  for (let i = 0; i < wantedAnswers.length; i++) {
+    const ans = wantedAnswers[i];
+    const tEl = textMap.get(normChoice(ans));
+    if (!tEl) {
+      notFound.push(ans);
+      continue;
+    }
+
+    // piccolo delay per stabilità UI (soprattutto sulle multiple)
+    /* eslint no-await-in-loop: "off" */
+    await new Promise((r) => setTimeout(r, 300));
+
+    const ok = await clickOptionElement(tEl);
+    if (ok) selected++;
+    else notFound.push(ans);
   }
 
-  // simula un click solo su quella risposta
-  try {
-    highlight(match);
-    alert("✅ Cliccata la risposta: " + firstAnswer);
-  } catch (e) {
-    console.error("Errore cliccando la risposta:", e);
-    alert("❌ Errore nel click della risposta");
-  }
+  alert(
+    `✅ Selezionate ${selected}/${wantedAnswers.length} risposte.` +
+      (notFound.length ? `\n⚠️ Non trovate:\n- ${notFound.join("\n- ")}` : "")
+  );
 }
 
 /* === Hotkeys === */
@@ -251,7 +353,9 @@ window.addEventListener("keydown", (e) => {
 });
 window.addEventListener("keydown", (e) => {
   if (e.key && e.key.toLowerCase() === "f") {
-    findTextEverywherePrompt();
+    if (typeof findTextEverywherePrompt === "function") {
+      findTextEverywherePrompt();
+    }
   }
 });
 
