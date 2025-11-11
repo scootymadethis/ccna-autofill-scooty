@@ -392,82 +392,52 @@ function scanAllDocuments(processDoc) {
  * Salva in window.lastTextSearch = { query, equals, contains }
  */
 function findTextEverywherePrompt() {
-  const query = window.prompt(
-    "Testo da cercare (match UGUAGLIA o CONTIENE):",
+  const queryRaw = window.prompt(
+    "Testo ESATTO da cercare in .mcq__item-text-inner:",
     ""
   );
-  if (!query) {
+  if (!queryRaw) {
     alert("Nessun testo inserito. Annullato.");
     return;
   }
 
-  const lowerQuery = query.toLowerCase().trim();
-  const results = [];
+  // normalizzazione "equità": trim e compressione spazi interni (no lowercase)
+  const norm = (s) =>
+    String(s || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  const query = norm(queryRaw);
 
-  // attraversa tutti i documenti e shadow roots
+  /** @type {{el:Element, path:string, text:string}[]} */
+  const matches = [];
+
   scanAllDocuments((doc, path) => {
     try {
-      walkRootForElements(doc, (el) => {
-        const rawText = el.textContent || "";
-        const text = rawText.replace(/\s+/g, " "); // normalizza spazi
-        if (!text.toLowerCase().includes(lowerQuery)) return;
-
-        // trova posizione del match
-        const idx = text.toLowerCase().indexOf(lowerQuery);
-        if (idx === -1) return;
-
-        // --- delimitazione con "almeno due spazi" ---
-        // cerca da idx verso sinistra il gruppo di >=2 spazi
-        const before = rawText.slice(0, idx);
-        const after = rawText.slice(idx + query.length);
-
-        // regex per trovare ultimi "  " prima del match
-        const leftMatch = before.match(/(\s{2,})[^]*$/);
-        // regex per trovare primi "  " dopo il match
-        const rightMatch = after.match(/^([^]*?)(\s{2,})/);
-
-        let leftIdx = leftMatch
-          ? before.lastIndexOf(leftMatch[1]) + leftMatch[1].length
-          : 0;
-        let rightIdx = rightMatch
-          ? idx + query.length + rightMatch[1].length
-          : rawText.length;
-
-        // estrai frase e pulisci
-        const snippet = rawText.slice(leftIdx, rightIdx).trim();
-
-        results.push({
-          el,
-          path: `${path} :: ${cssPath(el)}`,
-          snippet,
-          full: rawText.trim(),
-        });
-      });
+      // cerca SOLO gli elementi risposta
+      const nodes = deepQuerySelectorAll(doc, ".mcq__item-text-inner");
+      for (const el of nodes) {
+        const txt = norm(el.textContent);
+        if (txt === query) {
+          matches.push({ el, path: `${path} :: ${cssPath(el)}`, text: txt });
+        }
+      }
     } catch {}
   });
 
-  if (!results.length) {
-    alert(`❌ Nessun elemento trovato che contenga: "${query}"`);
+  if (!matches.length) {
+    alert(`❌ Nessun .mcq__item-text-inner con testo ESATTO: "${query}"`);
     return;
   }
 
-  // evidenzia i primi risultati
-  results.slice(0, 5).forEach((m) => highlight(m.el));
+  // evidenzia i primi risultati e porta in vista
+  matches.slice(0, 5).forEach((m) => highlight(m.el));
 
   // salva per uso in console
-  window.lastTextSearch = { query, results };
+  window.lastExactChoice = { query, matches };
 
-  // compone messaggio
-  let msg = `🔎 Ricerca: "${query}"\n\nTrovati ${results.length} risultati.\n\n`;
-  msg += results
-    .map(
-      (m, i) =>
-        `${i + 1}) ${m.path}\n--- Frase trovata (tra ≥2 spazi) ---\n${
-          m.snippet
-        }\n`
-    )
-    .join("\n");
-
+  // report compatto (testo è identico per tutti, ma mostro path per contesto)
+  let msg = `✅ Trovati ${matches.length} elementi .mcq__item-text-inner con testo ESATTO:\n\n"${query}"\n\n`;
+  msg += matches.map((m, i) => `${i + 1}) ${m.path}`).join("\n");
   alert(msg);
 }
 
