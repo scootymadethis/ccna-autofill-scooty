@@ -1,18 +1,29 @@
 /**
- * answer.js — completo
- * - supporto iframe + shadow DOM
- * - domanda da .mcq__body-inner[dataIndex-1]
- * - risalita a .mcq__inner → discesa a .mcq__widget-inner
- * - risposte lette da .mcq__item-text-inner
- * - alert elenco risposte correnti
- * - matching/auto-selezione risposte (se answerData passato)
+ * answer.js — completo + ricerca testuale globale (prompt con tasto "F")
+ *
+ * Funzioni principali:
+ * - answerQuestion(answerData)
+ *   • trova <button class="active-block" data-index="..."> anche in iframe/shadow
+ *   • prende domanda da .mcq__body-inner[idx-1]
+ *   • risale fino a .mcq__inner, scende a .mcq__widget-inner
+ *   • estrae risposte da .mcq__item-text-inner
+ *   • salva window.currentAnswers e (se answerData) seleziona le corrette
+ * - findTextEverywherePrompt()
+ *   • chiede stringa via prompt
+ *   • cerca in tutto il DOM (+ shadow DOM "open" + iframe same-origin)
+ *   • match UGUAGLIA o CONTIENE (case-insensitive, spazi normalizzati)
+ *   • mostra alert con contenuto intero degli elementi trovati
+ *
+ * Hotkeys:
+ *   A → answerQuestion(window.answerData || [])
+ *   F → findTextEverywherePrompt()
  *
  * @typedef {{question: string, answers: string[]}} Answer
  */
 
-/* ===================== UTIL ===================== */
+/* ===================== UTIL COMUNI ===================== */
 
-/** Scansiona DOM + shadow root "open" e fa querySelectorAll */
+/** querySelectorAll in DOM + shadow root "open" (ricorsivo) */
 function deepQuerySelectorAll(root, selector) {
   const out = [];
   const stack = [root];
@@ -42,11 +53,57 @@ function deepQuerySelector(root, selector) {
   return all.length ? all[0] : null;
 }
 
+/** Normalizzazione semplice per confronti testuali */
+function normalize(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[^\w ]/g, "");
+}
+function matchAnswer(a, b) {
+  return normalize(a) === normalize(b);
+}
+
+/** Path CSS sintetico per debug */
+function cssPath(el) {
+  if (!el || el.nodeType !== 1) return "";
+  const parts = [];
+  let node = el;
+  while (node && node.nodeType === 1 && parts.length < 10) {
+    const name = node.tagName.toLowerCase();
+    const id = node.id ? `#${node.id}` : "";
+    let cls = "";
+    if (node.classList && node.classList.length) {
+      cls = "." + Array.from(node.classList).slice(0, 3).join(".");
+    }
+    parts.unshift(name + id + cls);
+    node = node.parentElement;
+  }
+  return parts.join(" > ");
+}
+
+/** Evidenzia e scrolla in vista (per ricerca testuale) */
+function highlight(el) {
+  try {
+    const old = el.style.outline;
+    el.style.outline = "3px solid red";
+    el.scrollIntoView({
+      block: "center",
+      inline: "nearest",
+      behavior: "smooth",
+    });
+    setTimeout(() => (el.style.outline = old), 2500);
+  } catch {}
+}
+
+/* ===================== TROVA active-block (iframe + shadow) ===================== */
+
 /**
- * Cerca .active-block:
+ * Cerca <button class="active-block">:
  * - nel documento principale
  * - ricorsivamente in tutti gli iframe same-origin
- * Attraversa shadow DOM aperti.
+ * Attraversa shadow DOM "open".
  */
 function findActiveBlockEverywhere() {
   // top document prima
@@ -99,16 +156,6 @@ function findActiveBlockEverywhere() {
   return res;
 }
 
-/** Normalizza testo per confronto semplice */
-function normalize(s) {
-  return String(s || "")
-    .toLowerCase()
-    .replace(/[^\w]/g, "");
-}
-function matchAnswer(a, b) {
-  return normalize(a) === normalize(b);
-}
-
 /* ===================== ESTRAZIONE RISPOSTE ===================== */
 
 /**
@@ -137,8 +184,7 @@ function getCurrentAnswersFromQuestionNode(questionTextDom) {
   // ogni risposta ha un .mcq__item-text-inner (uno per risposta)
   const textNodes = deepQuerySelectorAll(widgetInner, ".mcq__item-text-inner");
 
-  // i "container" delle risposte sono i parent immediati utili per click/checkbox
-  // se serve più su/giù, cambia qui:
+  // "container" su cui cliccare: parent più vicino utile
   const containers = textNodes.map(
     (n) => n.closest(".mcq__item, .mcq__option, .mcq__choice") || n
   );
@@ -151,7 +197,7 @@ function getCurrentAnswersFromQuestionNode(questionTextDom) {
 }
 
 /**
- * Trova le risposte corrette confrontando i testi delle risposte correnti
+ * Trova i container delle risposte corrette confrontando i testi correnti
  * con l'answerData.
  *
  * @param {Array<Answer>} answerData
@@ -176,7 +222,7 @@ function findCorrectAnswerContainers(answerData, questionText, current) {
           }
         }
       }
-      break; // una volta matchata la domanda, possiamo fermarci
+      break; // domanda trovata, basta
     }
   }
   return out;
@@ -217,9 +263,6 @@ function answerQuestion(answerData) {
     return;
   }
   const questionTextDom = bodies[idx0];
-  // dopo aver settato questionTextDom = bodies[idx0];
-  debugAscendParents(questionTextDom); // <-- DEBUG: risalita con alert a ogni step
-
   if (!questionTextDom) {
     alert("❌ Nessuna .mcq__body-inner all’indice " + idx0);
     return;
@@ -259,7 +302,7 @@ function answerQuestion(answerData) {
           input.dispatchEvent(new Event("change", { bubbles: true }));
         } catch {}
       } else {
-        // fallback: click sul container (spesso la UI seleziona così)
+        // fallback: click sul container
         try {
           c.click();
         } catch {}
@@ -274,66 +317,153 @@ function answerQuestion(answerData) {
   }
 }
 
-// Debug: risale dai genitori e mostra info a ogni step.
-// Attraversa anche gli shadow root (salendo all'host).
-function debugAscendParents(startNode) {
-  if (!startNode) {
-    alert("❌ debugAscendParents: startNode assente");
+/* ===================== RICERCA TESTUALE GLOBALE (COMPLEMENTO) ===================== */
+
+/** normalizza per equals/contains (case-insensitive, spazi compressi) */
+function normLite(s) {
+  return String(s || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+function eqi(a, b) {
+  return normLite(a) === normLite(b);
+}
+function inci(hay, needle) {
+  return normLite(hay).includes(normLite(needle));
+}
+
+/** TreeWalker su ELEMENTI + shadow root "open" */
+function walkRootForElements(root, onElement) {
+  if (!root) return;
+  try {
+    const walker = (root.ownerDocument || root).createTreeWalker(
+      root,
+      NodeFilter.SHOW_ELEMENT,
+      null
+    );
+    let n;
+    while ((n = walker.nextNode())) {
+      onElement(n);
+      if (n.shadowRoot) walkRootForElements(n.shadowRoot, onElement);
+    }
+  } catch {
+    // fallback iterativo
+    const stack = [root];
+    while (stack.length) {
+      const cur = stack.pop();
+      if (!cur) continue;
+      if (cur.nodeType === 1) onElement(cur);
+      if (cur.shadowRoot) stack.push(cur.shadowRoot);
+      if (cur.children) for (const c of cur.children) stack.push(c);
+    }
+  }
+}
+
+/** Scansiona documento + iframe same-origin */
+function scanAllDocuments(processDoc) {
+  const visited = new Set();
+  function visitWindow(win, path) {
+    try {
+      if (!win || visited.has(win)) return;
+      visited.add(win);
+      const doc = win.document; // SecurityError se cross-origin
+      processDoc(doc, path);
+
+      for (let i = 0; i < win.frames.length; i++) {
+        try {
+          void win.frames[i].document; // same-origin check
+          visitWindow(win.frames[i], `${path} > iframe[${i}]`);
+        } catch {
+          // cross-origin: salta
+        }
+      }
+    } catch {
+      // non accessibile
+    }
+  }
+  visitWindow(window, "top");
+}
+
+/**
+ * Prompt + ricerca testuale globale.
+ * Trova elementi il cui contenuto è UGUAGLIA o CONTIENE la stringa.
+ * Mostra un alert con l'intero contenuto e path sintetico.
+ * Salva in window.lastTextSearch = { query, equals, contains }
+ */
+function findTextEverywherePrompt() {
+  const query = window.prompt(
+    "Testo da cercare (match UGUAGLIA o CONTIENE):",
+    ""
+  );
+  if (!query) {
+    alert("Nessun testo inserito. Annullato.");
     return;
   }
 
-  let cur = startNode;
-  let steps = 0;
+  /** @type {{el:Element, path:string, content:string}[]} */
+  const equals = [];
+  /** @type {{el:Element, path:string, content:string}[]} */
+  const contains = [];
 
-  alert(
-    "🔼 Parto da: " + (cur.tagName ? cur.tagName.toLowerCase() : cur.nodeName)
-  );
+  scanAllDocuments((doc, path) => {
+    try {
+      walkRootForElements(doc, (el) => {
+        const text = (el.textContent || "").trim();
+        if (!text) return;
 
-  while (cur && steps < 100) {
-    let parent = cur.parentElement;
-    let crossedShadow = false;
+        if (eqi(text, query)) {
+          equals.push({ el, path: `${path} :: ${cssPath(el)}`, content: text });
+        } else if (inci(text, query)) {
+          contains.push({
+            el,
+            path: `${path} :: ${cssPath(el)}`,
+            content: text,
+          });
+        }
+      });
+    } catch {}
+  });
 
-    // se non c'è parentElement, prova a salire all'host dello shadow root
-    if (!parent && cur.getRootNode) {
-      const root = cur.getRootNode();
-      if (root && root.host) {
-        parent = root.host;
-        crossedShadow = true;
-      }
-    }
+  // evidenzia alcuni match
+  equals.slice(0, 5).forEach((m) => highlight(m.el));
+  contains.slice(0, 5).forEach((m) => highlight(m.el));
 
-    if (!parent) {
-      alert("⛔ Stop: nessun parentElement e nessun host di shadow trovato.");
-      break;
-    }
+  window.lastTextSearch = { query, equals, contains };
 
-    const tag = parent.tagName
-      ? parent.tagName.toLowerCase()
-      : String(parent.nodeName);
-    const classes = parent.classList
-      ? Array.from(parent.classList).join(" ")
-      : parent.className || "";
-    const id = parent.id ? "#" + parent.id : "";
-
-    alert(
-      `[#${steps}] ${crossedShadow ? "(shadow→host) " : ""}${tag}${id}  ` +
-        (classes ? 'class="' + classes + '"' : "(senza classi)")
-    );
-
-    // stop quando troviamo .mcq__inner
-    if (parent.classList && parent.classList.contains("mcq__inner")) {
-      alert("✅ Trovato .mcq__inner — fine risalita.");
-      break;
-    }
-
-    cur = parent;
-    steps++;
+  if (!equals.length && !contains.length) {
+    alert(`❌ Nessun elemento trovato che contenga: "${query}"`);
+    return;
   }
+
+  let msg = `🔎 Ricerca: "${query}"\n\n`;
+  if (equals.length) {
+    msg += `=== MATCH UGUAGLIA (${equals.length}) ===\n\n`;
+    msg += equals
+      .map((m, i) => {
+        const full = (m.content || "").replace(/\r?\n/g, "\n");
+        return `${i + 1}) ${m.path}\n----- CONTENUTO COMPLETO -----\n${full}\n`;
+      })
+      .join("\n");
+    msg += "\n";
+  }
+  if (contains.length) {
+    msg += `=== MATCH CONTIENE (${contains.length}) ===\n\n`;
+    msg += contains
+      .map((m, i) => {
+        const full = (m.content || "").replace(/\r?\n/g, "\n");
+        return `${i + 1}) ${m.path}\n----- CONTENUTO COMPLETO -----\n${full}\n`;
+      })
+      .join("\n");
+    msg += "\n";
+  }
+
+  alert(msg);
 }
 
 /* ===================== HOTKEY / EXPORT ===================== */
 
-// Premi "A" per avviare tutto (usa window.answerData se presente)
+// Premi "A" per avviare l'autofill (usa window.answerData se presente)
 window.addEventListener("keydown", (e) => {
   if (e.key && e.key.toLowerCase() === "a") {
     alert("🔑 Premuto A → answerQuestion()");
@@ -341,6 +471,14 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+// Premi "F" per lanciare il prompt di ricerca testuale
+window.addEventListener("keydown", (e) => {
+  if (e.key && e.key.toLowerCase() === "f") {
+    findTextEverywherePrompt();
+  }
+});
+
 // Esporta funzioni utili
 window.answerQuestion = answerQuestion;
 window.getCurrentAnswersFromQuestionNode = getCurrentAnswersFromQuestionNode;
+window.findTextEverywherePrompt = findTextEverywherePrompt;
